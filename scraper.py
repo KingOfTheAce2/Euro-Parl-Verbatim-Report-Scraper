@@ -9,10 +9,10 @@ from datasets import Dataset
 from huggingface_hub import HfApi, login
 from tqdm import tqdm
 
-# Start from the first available verbatim report page and follow "Volgende" links
-START_TOC_URL = "https://www.europarl.europa.eu/doceo/document/CRE-4-1996-04-15-TOC_NL.html"
+# Start from the first available adopted text page and follow "Volgende" links
+START_TOC_URL = "https://www.europarl.europa.eu/doceo/document/TA-5-1999-07-21-TOC_NL.html"
 HF_USERNAME = os.environ.get("HF_USERNAME", "vGassen")
-HF_DATASET_NAME = "Dutch-European-Parliament-Verbatim-Reports"
+HF_DATASET_NAME = "Dutch-European-Parliament-Adopted-Texts"
 HF_REPO_ID = f"{HF_USERNAME}/{HF_DATASET_NAME}"
 
 
@@ -129,7 +129,7 @@ def scrape() -> list:
             try:
                 text = fetch_report_text(url, session)
                 if text:
-                    data.append({"URL": url, "text": text, "source": "European Parliament Verbatim Report"})
+                    data.append({"URL": url, "text": text, "source": "European Parliament Adopted Text"})
             except Exception as e:
                 print(f"Failed to scrape {url}: {e}")
     return data

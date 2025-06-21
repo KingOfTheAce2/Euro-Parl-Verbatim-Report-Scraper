@@ -1,4 +1,4 @@
-name: Scrape Verbatim Reports
+name: Scrape Adopted Texts
 
 on:
   workflow_dispatch:
