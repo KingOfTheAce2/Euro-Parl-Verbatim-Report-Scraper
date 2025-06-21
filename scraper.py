@@ -9,19 +9,14 @@ from datasets import Dataset
 from huggingface_hub import HfApi, login
 from tqdm import tqdm
 
-# Start from the first available minutes page and follow "Volgende" links
-START_TOC_URL = "https://www.europarl.europa.eu/doceo/document/PV-5-2003-05-12-TOC_NL.html"
-HF_USERNAME = os.environ.get("HF_USERNAME", "YOUR_HUGGINGFACE_USERNAME")
-HF_DATASET_NAME = "Dutch-European-Parliament-Minutes"
+# Start from the first available verbatim report page and follow "Volgende" links
+START_TOC_URL = "https://www.europarl.europa.eu/doceo/document/CRE-4-1996-04-15-TOC_NL.html"
+HF_USERNAME = os.environ.get("HF_USERNAME", "vGassen")
+HF_DATASET_NAME = "Dutch-European-Parliament-Verbatim-Reports"
 HF_REPO_ID = f"{HF_USERNAME}/{HF_DATASET_NAME}"
 
-NAMESPACES = {
-    "text": "http://openoffice.org/2000/text",
-    "table": "http://openoffice.org/2000/table",
-}
 
-
-def collect_minutes_urls(start_url: str):
+def collect_report_urls(start_url: str):
     urls = []
     visited = set()
     current = start_url
@@ -32,8 +27,8 @@ def collect_minutes_urls(start_url: str):
         resp = session.get(current, timeout=20)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
-        minutes_url = current.replace("-TOC_NL.html", "_NL.xml")
-        urls.append(minutes_url)
+        report_url = current.replace("-TOC_NL.html", "_NL.html")
+        urls.append(report_url)
         next_link = soup.find("a", title="Volgende")
         if not next_link:
             next_link = soup.find("a", string=re.compile("Volgende", re.I))
@@ -76,88 +71,65 @@ def clean_text(text: str) -> str:
 
 
 def extract_dutch_text_from_xml(xml_content: bytes) -> str | None:
-    """Parse XML minutes and return cleaned Dutch text."""
+    """Parse XML verbatim report and return cleaned Dutch text."""
     try:
         parser = etree.XMLParser(recover=True, ns_clean=True)
         root = etree.fromstring(xml_content, parser=parser)
     except etree.XMLSyntaxError:
         return None
 
-    dutch_texts = []
-    relevant_sections = [
-        "PV.Other.Text",
-        "PV.Debate.Text",
-        "PV.Vote.Text",
-        "PV.Sitting.Resumption.Text",
-        "PV.Approval.Text",
-        "PV.Agenda.Text",
-        "PV.Sitting.Closure.Text",
-    ]
+    dutch_nodes = root.xpath(
+        '//*[translate(@xml:lang, "NL", "nl")="nl" or translate(@lang, "NL", "nl")="nl"]'
+    )
+    texts = []
+    for node in dutch_nodes:
+        text_content = "".join(node.itertext()).strip()
+        if text_content:
+            texts.append(text_content)
 
-    for section in relevant_sections:
-        xpath_query = f"//{section}//text:p"
-        for p_tag in root.xpath(xpath_query, namespaces=NAMESPACES):
-            text_content = p_tag.xpath("string()").strip()
-            if not text_content:
-                continue
-            if p_tag.xpath("ancestor::table:table", namespaces=NAMESPACES):
-                continue
-            if (
-                p_tag.xpath("./Orator.List.Text", namespaces=NAMESPACES)
-                or p_tag.xpath("./Attendance.Participant.Name", namespaces=NAMESPACES)
-            ):
-                name_list_text = p_tag.xpath(
-                    "string(./Orator.List.Text)", namespaces=NAMESPACES
-                ).strip()
-                if (
-                    len(text_content) < 100
-                    and name_list_text
-                    and name_list_text == text_content
-                ):
-                    continue
-            if len(text_content) < 20 and not re.search(r"[a-zA-Z]{5,}", text_content):
-                continue
-            dutch_texts.append(text_content)
+    if not texts:
+        texts = [t.strip() for t in root.xpath("//text()") if t.strip()]
 
-    final_text = clean_text("\n".join(dutch_texts))
+    final_text = clean_text("\n".join(texts))
     if final_text and len(final_text) > 50:
         return final_text
     return None
 
 
 def extract_dutch_text_from_html(html_content: str) -> str | None:
-    """Parse HTML minutes and return cleaned Dutch text."""
+    """Parse HTML verbatim report and return cleaned Dutch text."""
     soup = BeautifulSoup(html_content, "lxml")
-    paragraphs = [
-        p.get_text(" ", strip=True) for p in soup.find_all("p") if p.get_text(strip=True)
+    dutch_tags = [
+        t for t in soup.find_all(True)
+        if (t.get("lang", "").lower().startswith("nl") or t.get("xml:lang", "").lower().startswith("nl"))
     ]
+    if dutch_tags:
+        paragraphs = [t.get_text(" ", strip=True) for t in dutch_tags if t.get_text(strip=True)]
+    else:
+        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p") if p.get_text(strip=True)]
     final_text = clean_text("\n".join(paragraphs))
     if final_text and len(final_text) > 50:
         return final_text
     return None
 
-
-def fetch_minutes_text(url: str, session: requests.Session) -> str | None:
+def fetch_report_text(url: str, session: requests.Session) -> str | None:
     resp = session.get(url, timeout=20)
-    if resp.status_code == 404 and url.endswith("_NL.xml"):
-        # Older minutes might only be available in HTML format
-        html_url = url.replace("_NL.xml", "_NL.html")
-        resp = session.get(html_url, timeout=20)
-        resp.raise_for_status()
-        return extract_dutch_text_from_html(resp.text)
     resp.raise_for_status()
-    return extract_dutch_text_from_xml(resp.content)
+    content_type = resp.headers.get("Content-Type", "")
+    if url.endswith(".xml") or "xml" in content_type:
+        return extract_dutch_text_from_xml(resp.content)
+    return extract_dutch_text_from_html(resp.text)
 
 
 def scrape() -> list:
-    toc_urls = collect_minutes_urls(START_TOC_URL)
+    toc_urls = collect_report_urls(START_TOC_URL)
     data = []
     with requests.Session() as session:
-        for url in tqdm(toc_urls, desc="Scraping minutes"):
+        for url in tqdm(toc_urls, desc="Scraping reports"):
             try:
-                text = fetch_minutes_text(url, session)
+                text = fetch_report_text(url, session)
                 if text:
-                    data.append({"URL": url, "text": text, "source": "European Parliament Minutes"})
+                    data.append({"URL": url, "text": text, "source": "European Parliament Verbatim Report"})
             except Exception as e:
                 print(f"Failed to scrape {url}: {e}")
     return data
