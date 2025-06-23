@@ -4,3 +4,4 @@ lxml
 datasets
 huggingface_hub
 tqdm
+ftfy

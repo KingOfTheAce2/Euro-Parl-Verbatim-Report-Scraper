@@ -8,6 +8,7 @@ from lxml import etree
 from datasets import Dataset
 from huggingface_hub import HfApi, login
 from tqdm import tqdm
+from ftfy import fix_text
 
 # Start from the first available verbatim report page and follow "Volgende" links
 START_TOC_URL = "https://www.europarl.europa.eu/doceo/document/CRE-4-1996-04-15-TOC_NL.html"
@@ -40,6 +41,7 @@ def collect_report_urls(start_url: str):
 
 def clean_text(text: str) -> str:
     """Apply common cleanup rules."""
+    text = fix_text(text)
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"\(The sitting (?:was suspended|opened|closed|ended) at.*?\)", "", text, flags=re.IGNORECASE)
@@ -88,7 +90,7 @@ def extract_dutch_text_from_xml(xml_content: bytes) -> str | None:
             texts.append(text_content)
 
     if not texts:
-        texts = [t.strip() for t in root.xpath("//text()") if t.strip()]
+        return None
 
     final_text = clean_text("\n".join(texts))
     if final_text and len(final_text) > 50:
@@ -103,10 +105,9 @@ def extract_dutch_text_from_html(html_content: str) -> str | None:
         t for t in soup.find_all(True)
         if (t.get("lang", "").lower().startswith("nl") or t.get("xml:lang", "").lower().startswith("nl"))
     ]
-    if dutch_tags:
-        paragraphs = [t.get_text(" ", strip=True) for t in dutch_tags if t.get_text(strip=True)]
-    else:
-        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p") if p.get_text(strip=True)]
+    paragraphs = [t.get_text(" ", strip=True) for t in dutch_tags if t.get_text(strip=True)]
+    if not paragraphs:
+        return None
     final_text = clean_text("\n".join(paragraphs))
     if final_text and len(final_text) > 50:
         return final_text
@@ -115,6 +116,8 @@ def extract_dutch_text_from_html(html_content: str) -> str | None:
 def fetch_report_text(url: str, session: requests.Session) -> str | None:
     resp = session.get(url, timeout=20)
     resp.raise_for_status()
+    if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
+        resp.encoding = resp.apparent_encoding
     content_type = resp.headers.get("Content-Type", "")
     if url.endswith(".xml") or "xml" in content_type:
         return extract_dutch_text_from_xml(resp.content)
