@@ -101,13 +101,36 @@ def extract_dutch_text_from_xml(xml_content: bytes) -> str | None:
 def extract_dutch_text_from_html(html_content: str) -> str | None:
     """Parse HTML verbatim report and return cleaned Dutch text."""
     soup = BeautifulSoup(html_content, "lxml")
-    dutch_tags = [
-        t for t in soup.find_all(True)
-        if (t.get("lang", "").lower().startswith("nl") or t.get("xml:lang", "").lower().startswith("nl"))
+
+    # Speeches are typically contained in <p class="contents"> elements on
+    # Dutch plenary pages. Extract those paragraphs first to avoid grabbing the
+    # entire page header or sidebar text.
+    paragraphs = [
+        p.get_text(" ", strip=True)
+        for p in soup.find_all("p", class_="contents")
+        if p.get_text(strip=True)
     ]
-    paragraphs = [t.get_text(" ", strip=True) for t in dutch_tags if t.get_text(strip=True)]
+
+    if not paragraphs:
+        # Fallback: use elements explicitly marked as Dutch while skipping
+        # root-level containers such as <html> or <body> that would pull in
+        # the whole page including headers.
+        dutch_tags = [
+            t
+            for t in soup.find_all(True)
+            if (
+                t.get("lang", "").lower().startswith("nl")
+                or t.get("xml:lang", "").lower().startswith("nl")
+            )
+            and t.name not in {"html", "body"}
+        ]
+        paragraphs = [
+            t.get_text(" ", strip=True) for t in dutch_tags if t.get_text(strip=True)
+        ]
+
     if not paragraphs:
         return None
+
     final_text = clean_text("\n".join(paragraphs))
     if final_text and len(final_text) > 50:
         return final_text
