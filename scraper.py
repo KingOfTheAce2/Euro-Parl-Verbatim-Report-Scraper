@@ -9,6 +9,9 @@ from datasets import Dataset
 from huggingface_hub import HfApi, login
 from tqdm import tqdm
 from ftfy import fix_text
+from langdetect import DetectorFactory, LangDetectException, detect
+
+DetectorFactory.seed = 0
 
 # Start from the first available verbatim report page and follow "Volgende" links
 START_TOC_URL = "https://www.europarl.europa.eu/doceo/document/CRE-4-1996-04-15-TOC_NL.html"
@@ -72,6 +75,14 @@ def clean_text(text: str) -> str:
     return text
 
 
+def is_dutch(text: str) -> bool:
+    """Return True if the detected language is Dutch."""
+    try:
+        return detect(text) == "nl"
+    except LangDetectException:
+        return False
+
+
 def extract_dutch_text_from_xml(xml_content: bytes) -> str | None:
     """Parse XML verbatim report and return cleaned Dutch text."""
     try:
@@ -86,7 +97,7 @@ def extract_dutch_text_from_xml(xml_content: bytes) -> str | None:
     texts = []
     for node in dutch_nodes:
         text_content = "".join(node.itertext()).strip()
-        if text_content:
+        if text_content and is_dutch(text_content):
             texts.append(text_content)
 
     if not texts:
@@ -110,6 +121,7 @@ def extract_dutch_text_from_html(html_content: str) -> str | None:
         for p in soup.find_all("p", class_="contents")
         if p.get_text(strip=True)
     ]
+    paragraphs = [p for p in paragraphs if is_dutch(p)]
 
     if not paragraphs:
         # Fallback: use elements explicitly marked as Dutch while skipping
@@ -127,6 +139,7 @@ def extract_dutch_text_from_html(html_content: str) -> str | None:
         paragraphs = [
             t.get_text(" ", strip=True) for t in dutch_tags if t.get_text(strip=True)
         ]
+        paragraphs = [p for p in paragraphs if is_dutch(p)]
 
     if not paragraphs:
         return None
