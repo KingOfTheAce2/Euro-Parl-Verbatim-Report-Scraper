@@ -5,3 +5,4 @@ datasets
 huggingface_hub
 tqdm
 ftfy
+langdetect
